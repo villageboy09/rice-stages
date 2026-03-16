@@ -1,22 +1,27 @@
 import streamlit as st
-import tensorflow as tf
 import numpy as np
 from PIL import Image
+import tensorflow as tf 
 
-# 1. CACHING: Ensures the model loads only ONCE to save RAM
+# 1. CACHING: Initialize the TFLite Interpreter only once
 @st.cache_resource
-def load_cropsync_model():
-    # Loading the universally compatible .h5 format!
-    return tf.keras.models.load_model("rice_stage_model.h5")
+def load_tflite_model():
+    interpreter = tf.lite.Interpreter(model_path="rice_stage_model.tflite")
+    interpreter.allocate_tensors()
+    return interpreter
 
-model = load_cropsync_model()
+interpreter = load_tflite_model()
+
+# Get model input and output requirements
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 # Class labels
 classes = ["flowering", "germination", "noise", "tillering"]
 CONFIDENCE_THRESHOLD = 0.6
 
-st.title("🌾 Rice Crop Growth Stage Classifier")
-st.write("Upload a rice crop image to detect its growth stage.")
+st.title("🌾 Cropsync Rice Growth Stage Classifier")
+st.write("Upload a rice crop image from the field to instantly detect its growth stage.")
 
 uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
@@ -28,19 +33,23 @@ if uploaded_file is not None:
     image_rgb = image.convert("RGB")
     image_resized = image_rgb.resize((224, 224))
     
-    # Preprocess
-    img = np.array(image_resized) / 255.0
+    # Preprocess (crucial: TFLite expects strict float32 data types)
+    img = np.array(image_resized, dtype=np.float32) / 255.0
     img = np.expand_dims(img, axis=0)
 
-    # Predict
-    prediction = model.predict(img)[0]
+    # Run TFLite Prediction
+    interpreter.set_tensor(input_details[0]['index'], img)
+    interpreter.invoke()
+    prediction = interpreter.get_tensor(output_details[0]['index'])[0]
+
+    # Extract Results
     predicted_index = np.argmax(prediction)
     confidence = float(prediction[predicted_index])
     predicted_label = classes[predicted_index]
 
     # Display Results
     if predicted_label == "noise":
-        st.warning("⚠️ Invalid image. Please upload a clear rice crop image from the field.")
+        st.warning("⚠️ Invalid image. Please upload a clear rice crop image.")
     elif confidence < CONFIDENCE_THRESHOLD:
         st.warning("⚠️ Model uncertain. Please upload a clearer crop photo.")
     else:
